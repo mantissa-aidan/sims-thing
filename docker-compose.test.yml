@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sims-thing-test-runner
+    volumes:
+      - .:/app # Mount for tests to access the latest code
+    env_file:
+      - .env    # Tests might also need DB access or other env vars
+    environment:
+      # Ensure Flask app knows it's in a test-like environment if necessary
+      # For Pytest, the important part is the command override
+      - FLASK_APP=app.py 
+      - PYTHONPATH=/app  # Add the app directory to Python's import path
+      # MONGODB_URI will now point to the mongo service within Docker
+      - MONGODB_URI=mongodb://mongo:27017/sims_mud_db 
+      # OLLAMA_BASE_URL will be taken from .env for any tests that might use it
+    command: pytest -v tests/
+    depends_on:
+      - mongo # Ensures mongo starts before tests run
+
+  mongo:
+    image: mongo:latest
+    container_name: sims-thing-mongo-test # Use a different container name for test DB if running simultaneously
+    # If you want a completely separate DB instance for tests that can run concurrently
+    # with the dev DB, you might use a different port mapping too, e.g., "27018:27017"
+    # For now, we assume tests might run when dev is down, or we use different DB names/collections.
+    # Or, use a unique volume for test data if needed:
+    # volumes:
+    #  - mongotestdata:/data/db
+    volumes:
+      - mongodata:/data/db # Can share dev data or use a separate volume
+
+volumes:
+  mongodata: # Define if not already defined (or make it external if shared and defined in main compose)
+    # external: true # If you want to ensure it uses the one from the main docker-compose.yml
+    # For simplicity, we redefine it here, meaning `docker-compose -f ... up` creates it if not present. 

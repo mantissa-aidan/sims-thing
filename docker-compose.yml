@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sims-thing-app # Explicit container name
+    ports:
+      - "5001:5001"
+    volumes:
+      - .:/app  # Mount current directory to /app in container for hot-reloading
+    env_file:
+      - .env    # Load environment variables from .env file
+    environment:
+      # You can provide defaults here if .env is missing, or override .env vars
+      - FLASK_APP=app.py
+      - FLASK_DEBUG=1 # Ensure Flask runs in debug mode for hot reloading
+      # MONGODB_URI will now point to the mongo service within Docker
+      - MONGODB_URI=mongodb://mongo:27017/sims_mud_db
+      # OLLAMA_BASE_URL will be taken from .env
+    command: flask run --host=0.0.0.0 --port=5001
+    depends_on:
+      - mongo # Ensures mongo starts before the app
+
+  mongo:
+    image: mongo:latest # Use the official MongoDB image
+    container_name: sims-thing-mongo
+    ports:
+      - "27017:27017" # Expose MongoDB port to host (optional, for external tools)
+    volumes:
+      - mongodata:/data/db # Persist MongoDB data
+    # healthcheck: # Optional: add a healthcheck for more robust startup ordering
+    #   test: echo 'db.runCommand("ping").ok' | mongosh mongo:27017/test --quiet
+    #   interval: 10s
+    #   timeout: 10s
+    #   retries: 5
+    #   start_period: 40s
+
+volumes:
+  mongodata: # Define the named volume 
