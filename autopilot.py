@@ -2,7 +2,8 @@ import time
 import logging
 import sys
 import threading
-from app import get_llm_suggested_action, process_sim_action, initialize_game_world, DEFAULT_SIM_ID, app as flask_app, get_current_game_state
+import json
+from app import get_llm_suggested_action, process_sim_action, initialize_game_world, app as flask_app, get_current_game_state
 
 # Configure basic logging for the root logger (e.g., for this script's own direct logging)
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,9 +34,32 @@ def run_autopilot_simulation(sim_id, num_turns=10, turn_delay_seconds=5):
     total_llm_response_time_seconds = 0.0
     llm_calls_count = 0
 
+    # Load scenarios
+    try:
+        with open('scenarios.json', 'r') as f:
+            scenarios = json.load(f)
+    except FileNotFoundError:
+        logging.error("scenarios.json not found. Please create it.")
+        return
+    except json.JSONDecodeError:
+        logging.error("Error decoding scenarios.json. Please ensure it's valid JSON.")
+        return
+
+    # Select a scenario (e.g., the first one or a specific one by key)
+    # For now, let's hardcode to use "default_horace_apartment"
+    scenario_key = "default_horace_apartment"
+    if scenario_key not in scenarios:
+        logging.error(f"Scenario '{scenario_key}' not found in scenarios.json.")
+        return
+    
+    scenario_data = scenarios[scenario_key]
+    # The sim_id for the simulation is now determined by the scenario
+    # This function's sim_id parameter will be set by the caller based on this.
+    # However, initialize_game_world will use the sim_id from scenario_data.
+
     with flask_app.app_context():
-        initialize_game_world()
-        print("Game world initialized.")
+        initialize_game_world(scenario_data) # Pass scenario data
+        print(f"Game world initialized with scenario: {scenario_data.get('description', scenario_key)}.")
 
         for turn in range(1, num_turns + 1):
             print(f"\n--- Turn {turn}/{num_turns} for {sim_id} ---")
@@ -131,4 +155,22 @@ def run_autopilot_simulation(sim_id, num_turns=10, turn_delay_seconds=5):
         print("No LLM calls were made during the simulation to calculate average time.")
 
 if __name__ == "__main__":
-    run_autopilot_simulation(DEFAULT_SIM_ID, num_turns=5, turn_delay_seconds=3) 
+    # Load scenarios to get the sim_id for the default scenario
+    try:
+        with open('scenarios.json', 'r') as f:
+            scenarios_for_main = json.load(f)
+        default_scenario_key = "default_horace_apartment" # Ensure this key exists
+        if default_scenario_key in scenarios_for_main:
+            sim_id_to_run = scenarios_for_main[default_scenario_key]["sim_config"]["sim_id"]
+            run_autopilot_simulation(sim_id_to_run, num_turns=365, turn_delay_seconds=3)
+        else:
+            print(f"Error: Default scenario key '{default_scenario_key}' not found in scenarios.json.")
+            # Fallback or exit if necessary. For now, just printing an error.
+            # If you want to ensure it runs even if the key is missing, you might need a different approach
+            # or ensure DEFAULT_SIM_ID is available as a fallback from app.py if imported.
+            # For this refactor, we assume the scenario and sim_id will be correctly loaded.
+    except FileNotFoundError:
+        print("Error: scenarios.json not found. Autopilot cannot start.")
+    except json.JSONDecodeError:
+        print("Error: Could not decode scenarios.json. Autopilot cannot start.")
+    # Original call: run_autopilot_simulation(DEFAULT_SIM_ID, num_turns=5, turn_delay_seconds=3) 

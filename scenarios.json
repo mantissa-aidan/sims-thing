@@ -1,0 +1,88 @@
+{
+  "default_horace_apartment": {
+    "description": "Horace, a regular Sim, in his usual studio apartment.",
+    "sim_config": {
+      "sim_id": "sim_horace",
+      "name": "Horace",
+      "location": "Living Area",
+      "mood": "neutral",
+      "needs": {"hunger": 50, "energy": 70, "social": 60, "fun": 40},
+      "inventory": [],
+      "current_activity": "idle"
+    },
+    "environment_config": {
+      "layout": {
+        "_id": "studio_apartment_layout",
+        "name": "Horace's Studio Apartment",
+        "zones": {
+          "Sleeping Area": {
+            "description": "A cozy corner with a neatly made bed and a nightstand.",
+            "connections": ["Living Area"],
+            "coordinates": {"x": 1, "y": 1}
+          },
+          "Living Area": {
+            "description": "A comfortable area with a sofa, a coffee table, and a bookshelf.",
+            "connections": ["Sleeping Area", "Kitchenette", "Desk Area"],
+            "coordinates": {"x": 2, "y": 1}
+          },
+          "Kitchenette": {
+            "description": "A small but functional kitchenette with a fridge, a counter, and a sink.",
+            "connections": ["Living Area"],
+            "coordinates": {"x": 3, "y": 1}
+          },
+          "Desk Area": {
+            "description": "A tidy desk with a computer, a lamp, and an office chair.",
+            "connections": ["Living Area"],
+            "coordinates": {"x": 2, "y": 2}
+          }
+        }
+      },
+      "objects": [
+        {
+          "_id": "obj_bed", "name": "Bed", "zone": "Sleeping Area", "current_state_key": "made",
+          "states": {"made": "The bed is neatly made.", "unmade": "The bed is unmade, covers rumpled."}, 
+          "interactions": ["sleep in", "make bed", "sit on"]
+        },
+        {
+          "_id": "obj_fridge", "name": "Fridge", "zone": "Kitchenette", "current_state_key": "closed",
+          "states": {"closed": "The fridge is closed.", "open": "The fridge is open, a cool light emanating from within."},
+          "interactions": ["open", "close", "look inside", "take item from"],
+          "contains": ["obj_milk_carton", "obj_banana_scenario"]
+        },
+        {
+          "_id": "obj_banana_scenario", "name": "Banana", "zone": "Kitchenette", 
+          "current_state_key": "whole",
+          "states": {
+            "whole": "a ripe, yellow banana.", 
+            "peeled": "a peeled banana, ready to eat.",
+            "eaten": "the banana peel."
+          },
+          "interactions": ["take", "peel", "eat", "examine"],
+          "properties": {"edible": true, "requires_peeling": true}
+        },
+        {
+          "_id": "obj_milk_carton", "name": "Milk Carton", "zone": "Kitchenette", 
+          "current_state_key": "sealed",
+          "states": {"sealed": "a sealed carton of milk.", "open": "an open carton of milk."}, 
+          "interactions": ["take", "open", "pour", "drink from"], 
+          "properties": {"drinkable": true, "capacity_ml": 1000, "current_ml": 1000}
+        },
+        {
+          "_id": "obj_sofa", "name": "Sofa", "zone": "Living Area", "current_state_key": "empty",
+          "states": {"empty": "The sofa looks inviting.", "occupied": "Someone is sitting on the sofa."},
+          "interactions": ["sit on", "lie down on", "get up from"]
+        },
+        {
+          "_id": "obj_computer", "name": "Computer", "zone": "Desk Area", "current_state_key": "off",
+          "states": {"off": "The computer is off.", "on": "The computer screen is glowing." },
+          "interactions": ["use computer", "turn on computer", "turn off computer", "check email", "browse web"]
+        },
+        {
+          "_id": "obj_desk_lamp", "name": "Desk Lamp", "zone": "Desk Area", "current_state_key": "off",
+          "states": {"off": "The desk lamp is off.", "on": "The desk lamp brightly illuminates the desk."},
+          "interactions": ["turn on", "turn off"]
+        }
+      ]
+    }
+  }
+} 

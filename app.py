@@ -4,6 +4,7 @@ from langchain_ollama.llms import OllamaLLM
 # from langchain_core.prompts import ChatPromptTemplate # We'll craft prompts directly for JSON
 import os
 import json # For parsing LLM JSON responses
+import re # For stripping <think> tags
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,7 +17,7 @@ client = MongoClient(MONGO_URI)
 db = client.get_database()
 sims_collection = db.sims
 environment_collection = db.environment_objects # More specific collection name
-apartment_layout_collection = db.apartment_layout
+apartment_layout_collection = db.apartment_layout # Will store the layout from scenario
 
 # Ollama Setup
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
@@ -25,7 +26,7 @@ ollama_llm = OllamaLLM(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
 app.logger.info(f"Initialized Ollama with model: {OLLAMA_MODEL} at {OLLAMA_BASE_URL}")
 
 # --- Game Constants and Initial State ---
-DEFAULT_SIM_ID = "sim_horace"
+DEFAULT_SIM_ID = "sim_horace" # This might become obsolete or just a fallback if no scenario specifies an ID
 RECOGNIZED_VERBS = [
     "go", "walk", "run", "move", # Movement
     "look", "examine", "inspect", "read", # Observation
@@ -39,118 +40,88 @@ RECOGNIZED_VERBS = [
     "peel", "combine" # Crafting/preparation
 ]
 
-def get_initial_apartment_layout():
-    return {
-        "_id": "studio_apartment",
-        "name": "Hoarace's Studio Apartment",
-        "zones": {
-            "Sleeping Area": {
-                "description": "A cozy corner with a neatly made bed and a nightstand.",
-                "connections": ["Living Area"],
-                "coordinates": {"x": 1, "y": 1} # Example, if we go grid-based later
-            },
-            "Living Area": {
-                "description": "A comfortable area with a sofa, a coffee table, and a bookshelf.",
-                "connections": ["Sleeping Area", "Kitchenette", "Desk Area"],
-                "coordinates": {"x": 2, "y": 1}
-            },
-            "Kitchenette": {
-                "description": "A small but functional kitchenette with a fridge, a counter, and a sink.",
-                "connections": ["Living Area"],
-                "coordinates": {"x": 3, "y": 1}
-            },
-            "Desk Area": {
-                "description": "A tidy desk with a computer, a lamp, and an office chair.",
-                "connections": ["Living Area"],
-                "coordinates": {"x": 2, "y": 2}
-            }
-            # Bathroom could be added later
-        }
-    }
+def initialize_game_world(scenario_data):
+    app.logger.info(f"Initializing game world with scenario: {scenario_data.get('description', 'No description')}")
 
-def get_initial_sim_state():
-    return {
-        "_id": DEFAULT_SIM_ID,
-        "name": "Horace",
-        "location": "Living Area", # Starting zone
-        "mood": "neutral",
-        "needs": {"hunger": 50, "energy": 70, "social": 60, "fun": 40},
-        "inventory": [],
-        "current_activity": "idle"
-    }
+    sim_config = scenario_data["sim_config"]
+    env_config = scenario_data["environment_config"]
+    layout_data = env_config["layout"]
+    object_definitions = env_config["objects"]
+    sim_id_for_inventory = sim_config["sim_id"]
 
-def get_initial_environment_objects():
-    return [
-        # Sleeping Area Objects
-        {"_id": "obj_bed", "name": "Bed", "zone": "Sleeping Area", "current_state_key": "made",
-         "states": {"made": "The bed is neatly made.", "unmade": "The bed is unmade, covers rumpled."}, 
-         "interactions": ["sleep in", "make bed", "sit on"]},
-        # Kitchenette Objects
-        {"_id": "obj_fridge", "name": "Fridge", "zone": "Kitchenette", "current_state_key": "closed",
-         "states": {"closed": "The fridge is closed.", "open": "The fridge is open, a cool light emanating from within."},
-         "interactions": ["open", "close", "look inside", "take item from"],
-         "contains": ["obj_milk", "obj_banana"] # IDs of other objects
-        },
-        {"_id": "obj_banana", "name": "Banana", "zone": "Fridge", "current_state_key": "whole", # Initial location is *inside* fridge
-         "states": {
-             "whole": "a ripe, yellow banana.", 
-             "peeled": "a peeled banana, ready to eat.",
-             "eaten": "the banana peel."
-         },
-         "interactions": ["take", "peel", "eat", "examine"], # take will move it to inventory/hand
-         "properties": {"edible": True, "requires_peeling": True}
-        },
-        {"_id": "obj_milk", "name": "Milk Carton", "zone": "Fridge", "current_state_key": "sealed",
-         "states": {"sealed": "a sealed carton of milk.", "open": "an open carton of milk."}, 
-         "interactions": ["take", "open", "pour", "drink from"], 
-         "properties": {"drinkable": True, "capacity_ml": 1000, "current_ml": 1000}
-        },
-        # Living Area Objects
-        {"_id": "obj_sofa", "name": "Sofa", "zone": "Living Area", "current_state_key": "empty",
-         "states": {"empty": "The sofa looks inviting.", "occupied": "Someone is sitting on the sofa."},
-         "interactions": ["sit on", "lie down on", "get up from"]},
-        # Desk Area Objects
-        {"_id": "obj_computer", "name": "Computer", "zone": "Desk Area", "current_state_key": "off",
-         "states": {"off": "The computer is off.", "on": "The computer screen is glowing." },
-         "interactions": ["use computer", "turn on computer", "turn off computer", "check email", "browse web"]},
-        {"_id": "obj_desk_lamp", "name": "Desk Lamp", "zone": "Desk Area", "current_state_key": "off",
-         "states": {"off": "The desk lamp is off.", "on": "The desk lamp brightly illuminates the desk."},
-         "interactions": ["turn on", "turn off"]} # Added a desk lamp too for more interaction
-    ]
-
-def initialize_game_world():
-    # Always clear and re-initialize apartment layout
+    # Clear existing collections
     apartment_layout_collection.delete_many({})
-    apartment_layout_collection.insert_one(get_initial_apartment_layout())
-    app.logger.info("Initialized apartment layout (cleared existing).")
-    
-    # Always clear and re-initialize Sims (currently only one)
     sims_collection.delete_many({})
-    sims_collection.insert_one(get_initial_sim_state())
-    app.logger.info(f"Initialized Sim: {DEFAULT_SIM_ID} (cleared existing).")
-
-    # Clear and re-initialize objects for simplicity during dev
     environment_collection.delete_many({})
-    initial_objects = get_initial_environment_objects()
-    if initial_objects:
-        environment_collection.insert_many(initial_objects)
-        app.logger.info(f"Initialized {len(initial_objects)} environment objects.")
-    else:
-        app.logger.info("No initial environment objects to load.")
 
+    # Initialize layout
+    apartment_layout_collection.insert_one(layout_data)
+    app.logger.info(f"Initialized layout: {layout_data.get('_id', 'N/A')}")
+
+    # Initialize Sim
+    sim_doc_to_insert = sim_config.copy()
+    if "sim_id" in sim_doc_to_insert:
+        sim_doc_to_insert["_id"] = sim_doc_to_insert.pop("sim_id")
+    else:
+        # This case should ideally not happen if scenarios are well-formed
+        app.logger.warning("Sim config in scenario is missing 'sim_id'. MongoDB will generate an _id.")
+        # If an _id is already present, MongoDB will use it. If not, it will generate one.
+
+    sims_collection.insert_one(sim_doc_to_insert)
+    app.logger.info(f"Initialized Sim: {sim_doc_to_insert['_id']}") # Log the actual _id used
+
+    # Initialize Environment Objects (with special handling for inventory)
+    objects_to_insert = []
+    # Use the _id that was actually inserted for the sim for inventory zone consistency
+    actual_sim_id_for_inventory = sim_doc_to_insert['_id'] 
+    sim_inventory_ids = sim_config.get("inventory", []) # Original sim_config still has inventory list by original object _ids
+    
+    for obj_def in object_definitions:
+        obj_copy = obj_def.copy() # Work on a copy
+        if obj_copy["_id"] in sim_inventory_ids:
+            obj_copy["zone"] = f"inventory_{actual_sim_id_for_inventory}" # Assign to Sim's inventory zone
+        objects_to_insert.append(obj_copy)
+    
+    if objects_to_insert:
+        environment_collection.insert_many(objects_to_insert)
+        app.logger.info(f"Initialized {len(objects_to_insert)} environment objects.")
+    else:
+        app.logger.info("No environment objects defined in scenario to load.")
 
 # --- Helper Functions ---
 def get_current_game_state(sim_id):
     sim_state = sims_collection.find_one({"_id": sim_id})
+    if not sim_state: # Important check if sim_id from scenario is not found
+        app.logger.error(f"Sim state not found for sim_id: {sim_id}")
+        return None, None, None, None
+
     # Fetch objects in the Sim's current zone and inventory
-    objects_in_zone = list(environment_collection.find({"zone": sim_state["location"]}))
+    # Ensure sim_state["location"] exists before querying
+    objects_in_zone = []
+    if sim_state.get("location"):
+        objects_in_zone = list(environment_collection.find({"zone": sim_state["location"]}))
+    else:
+        app.logger.warning(f"Sim {sim_id} has no location set.")
+
     inventory_ids = [item_id for item_id in sim_state.get("inventory", [])]
     objects_in_inventory = []
     if inventory_ids:
-        objects_in_inventory = list(environment_collection.find({"_id": {"$in": inventory_ids}}))
+        # Fetch objects whose _id is in inventory_ids AND their zone indicates they are in this sim's inventory
+        # This ensures we only fetch objects that are *truly* in this sim's inventory per their current state in the DB.
+        # The scenario initialization should have set their zone to inventory_<sim_id>.
+        objects_in_inventory = list(environment_collection.find({
+            "_id": {"$in": inventory_ids},
+            "zone": f"inventory_{sim_id}"
+        }))
     
-    apartment_layout = apartment_layout_collection.find_one({"_id": "studio_apartment"})
-    return sim_state, objects_in_zone, objects_in_inventory, apartment_layout
+    # The layout ID might come from the scenario, or we assume a single layout doc for now.
+    # For simplicity, let's assume the layout inserted by initialize_game_world is the one to use.
+    # If multiple layouts were possible, we'd need a way to identify which one is active.
+    layout = apartment_layout_collection.find_one({}) # Finds the currently loaded layout
+    if not layout:
+        app.logger.error("No apartment layout found in the database.")
+
+    return sim_state, objects_in_zone, objects_in_inventory, layout
 
 def validate_llm_json_response(llm_json):
     if not isinstance(llm_json, dict):
@@ -205,7 +176,7 @@ def generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventor
         f'  "action": "(string, the chosen action phrase for {sim_name}, e.g., \\\\"eat obj_banana\\\\", \\\\"go to Sleeping Area\\\\")",\\n'
         f'  "reason": "(string, a brief explanation for why this action was chosen, e.g., \\\\"Horace is hungry and a banana is available.\\\\")"\\n'
         f'}}\\n'
-        f"CRITICAL: Ensure the JSON is complete and well-formed. No other text before or after the JSON.\\n\\n"
+        f"CRITICAL: Ensure the JSON is complete and well-formed. Your response MUST start with \'{{\' and end with \'}}\'. ABSOLUTELY NO TEXT OR EXPLANATION BEFORE OR AFTER THE JSON OBJECT.\\n\\n"
         f"What does {sim_name} do next and why?"
     )
     return prompt
@@ -224,16 +195,17 @@ def get_llm_suggested_action(sim_id):
         raw_llm_response = ollama_llm.invoke(prompt)
         # app.logger.debug(f"Raw LLM Action Suggestion for {sim_id}: {raw_llm_response}") # Commented out
 
-        # Attempt to find and parse a JSON block from the response
+        # Remove <think>...</think> blocks first
+        cleaned_response_no_think = re.sub(r"<think>.*?</think>", "", raw_llm_response, flags=re.DOTALL).strip()
+
+        # Attempt to find and parse a JSON block from the cleaned response
         json_string = None
         try:
-            # Find the start and end of the main JSON object
-            json_start_index = raw_llm_response.find('{')
-            json_end_index = raw_llm_response.rfind('}')
+            json_start_index = cleaned_response_no_think.find('{')
+            json_end_index = cleaned_response_no_think.rfind('}')
             
             if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
-                json_string = raw_llm_response[json_start_index : json_end_index + 1]
-                # app.logger.debug(f"Extracted JSON String for action suggestion: {json_string}") # Keep this commented for now
+                json_string = cleaned_response_no_think[json_start_index : json_end_index + 1]
                 parsed_json = json.loads(json_string)
                 if isinstance(parsed_json, dict) and "action" in parsed_json and "reason" in parsed_json:
                     action = str(parsed_json["action"]).strip()
@@ -243,11 +215,11 @@ def get_llm_suggested_action(sim_id):
                         return {"action": action, "reason": reason}
             
             # If direct JSON block parsing failed or didn't find the right keys
-            app.logger.warning(f"Could not parse valid action/reason JSON from LLM response for {sim_id}. Raw: {raw_llm_response}. Extracted: {json_string}")
+            app.logger.warning(f"Could not parse valid action/reason JSON from LLM response for {sim_id} after stripping think tags. Cleaned response: {cleaned_response_no_think}. Extracted JSON string: {json_string}")
             return None
 
         except json.JSONDecodeError as e:
-            app.logger.warning(f"JSONDecodeError for action suggestion {sim_id}: {e}. Extracted string: '{json_string if json_string else 'N/A'}'. Raw response: {raw_llm_response}")
+            app.logger.warning(f"JSONDecodeError for action suggestion {sim_id}: {e}. Cleaned response after stripping think tags: {cleaned_response_no_think}. Extracted JSON string: '{json_string if json_string else 'N/A'}'.")
             return None
 
     except Exception as e:
@@ -280,6 +252,10 @@ def process_sim_action(sim_id, player_action_text):
     # Handle 'go to' action (case-insensitive for target zone)
     first_word_action = player_action_text.split(" ", 1)[0].lower()
     if first_word_action == "go" or player_action_text.lower().startswith("go to "):
+        previous_activity = sim_state.get("current_activity", "")
+        previous_location_name = sim_state.get("location", "") # For finding the object Sim was using
+        environment_updates_for_go = []
+
         if player_action_text.lower().startswith("go to "):
             target_zone_input = player_action_text[len("go to "):].strip()
         elif len(player_action_text.split()) > 1:
@@ -301,12 +277,36 @@ def process_sim_action(sim_id, player_action_text):
                 break
         
         if matched_zone_name and matched_zone_name in current_zone_details.get("connections", []):
-            sims_collection.update_one({"_id": sim_id}, {"$set": {"location": matched_zone_name, "current_activity": f"going to {matched_zone_name}"}})
+            # Check if Sim was using an object that needs to be vacated
+            # Example: If activity was "sitting on obj_sofa"
+            activity_match = re.search(r"(obj_[a-zA-Z0-9_]+)", previous_activity) # General object ID extraction
+            if activity_match:
+                interacted_obj_id = activity_match.group(1)
+                # Ensure object is in the Sim's previous location before trying to update it
+                obj_to_vacate = environment_collection.find_one({"_id": interacted_obj_id, "zone": previous_location_name})
+                
+                if obj_to_vacate:
+                    app.logger.debug(f"Sim {sim_id} was using {interacted_obj_id} ({obj_to_vacate.get('name')}) with activity: {previous_activity}")
+                    # Specific logic for Sofa
+                    if obj_to_vacate.get("name") == "Sofa" and obj_to_vacate.get("current_state_key") == "occupied":
+                        environment_collection.update_one({"_id": interacted_obj_id}, {"$set": {"current_state_key": "empty"}})
+                        environment_updates_for_go.append({
+                            "object_id": interacted_obj_id, 
+                            "new_state_key": "empty", 
+                            "new_zone": None, 
+                            "add_to_contains": None, 
+                            "remove_from_contains": None
+                        })
+                        app.logger.info(f"Sofa {interacted_obj_id} vacated by {sim_id} upon moving.")
+                    # Add more object-specific vacating logic here (e.g., for beds)
+
+            new_sim_activity = f"moving to {matched_zone_name}"
+            sims_collection.update_one({"_id": sim_id}, {"$set": {"location": matched_zone_name, "current_activity": new_sim_activity}})
             return {
                 "narrative": f"{sim_state['name']} walks from the {current_zone_name} to the {matched_zone_name}.",
-                "sim_state_updates": {"location": matched_zone_name, "current_activity": f"going to {matched_zone_name}"},
-                "environment_updates": [],
-                "available_actions": [f"look around in {matched_zone_name}", f"examine <object in {matched_zone_name}>"]
+                "sim_state_updates": {"location": matched_zone_name, "current_activity": new_sim_activity},
+                "environment_updates": environment_updates_for_go, # Include updates for vacated objects
+                "available_actions": [f"look around in {matched_zone_name}", f"examine <object in {matched_zone_name}>"],
             }, 200
         else:
             return {"narrative": f"You can't go directly to {target_zone_input} from {current_zone_name}. Possible exits: {', '.join(current_zone_details.get('connections',[]))}"}, 200
@@ -345,7 +345,7 @@ def process_sim_action(sim_id, player_action_text):
         f"    {{ \n"
         f"      \"object_id\": \"(string, ID of object affected, e.g., obj_fridge, MUST be from 'Available object IDs' list)\", \n"
         f"      \"new_state_key\": \"(string, key of new state for the object, from its defined states, otherwise null)\", \n"
-        f"      \"new_zone\": \"(string, new zone ID if object moved, e.g., inventory_{DEFAULT_SIM_ID} or another zone ID, otherwise null)\", \n"
+        f"      \"new_zone\": \"(string, new zone ID if object moved, e.g., inventory_{sim_id} or another zone ID, otherwise null)\", \n"
         f"      \"add_to_contains\": \"(string, ID of object to add to this object's container, MUST be from 'Available object IDs' or new, otherwise null)\", \n"
         f"      \"remove_from_contains\": \"(string, ID of object to remove from this object's container, MUST be from 'Available object IDs', otherwise null)\" \n"
         f"    }}\n"
@@ -359,7 +359,7 @@ def process_sim_action(sim_id, player_action_text):
         f"  \"sim_state_updates\": {{ ... \"inventory_add\": \"obj_banana\" ... }},\n"
         f"  \"environment_updates\": [\n"
         f"    {{ \"object_id\": \"obj_fridge\", \"new_state_key\": null, \"new_zone\": null, \"add_to_contains\": null, \"remove_from_contains\": \"obj_banana\" }}, // Fridge contents changed\n"
-        f"    {{ \"object_id\": \"obj_banana\", \"new_state_key\": null, \"new_zone\": \"inventory_{DEFAULT_SIM_ID}\", \"add_to_contains\": null, \"remove_from_contains\": null }}  // Banana location changed\n"
+        f"    {{ \"object_id\": \"obj_banana\", \"new_state_key\": null, \"new_zone\": \"inventory_{sim_id}\", \"add_to_contains\": null, \"remove_from_contains\": null }}  // Banana location changed\n"
         f"  ]\n\n"
         f"If an action is valid but has no major effect (e.g., \"look at wall\"), the narrative should reflect that, and state_updates can be minimal or null.\n"
         f"Now, process the action: '{player_action_text}'"
@@ -372,21 +372,26 @@ def process_sim_action(sim_id, player_action_text):
         raw_llm_response = ollama_llm.invoke(prompt_context)
         # app.logger.debug(f"Raw LLM Response:\n{raw_llm_response}") # Commented out for cleaner autopilot
         
-        # Extract JSON block from the raw response
+        # Remove <think>...</think> blocks first, similar to get_llm_suggested_action
+        cleaned_response_no_think = re.sub(r"<think>.*?</think>", "", raw_llm_response, flags=re.DOTALL).strip()
+        # app.logger.debug(f"Cleaned LLM Response (no think tags):\\n{cleaned_response_no_think}")
+
+        # Extract JSON block from the cleaned response
+        json_string = None
         try:
-            json_start_index = raw_llm_response.find('{')
-            json_end_index = raw_llm_response.rfind('}')
+            json_start_index = cleaned_response_no_think.find('{')
+            json_end_index = cleaned_response_no_think.rfind('}')
             
             if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
-                json_string = raw_llm_response[json_start_index : json_end_index + 1]
-                # app.logger.debug(f"Extracted JSON String:\n{json_string}") # Commented out for cleaner autopilot
+                json_string = cleaned_response_no_think[json_start_index : json_end_index + 1]
+                # app.logger.debug(f"Extracted JSON String:\\n{json_string}") # Commented out for cleaner autopilot
                 llm_json = json.loads(json_string)
             else:
-                app.logger.error(f"Could not find valid JSON block in LLM response. Response: {raw_llm_response}")
-                return {"error": "Could not find valid JSON block in LLM response.", "llm_raw": raw_llm_response}, 500
+                app.logger.error(f"Could not find valid JSON block in cleaned LLM response. Cleaned response: {cleaned_response_no_think}")
+                return {"error": "Could not find valid JSON block in cleaned LLM response.", "llm_raw": raw_llm_response, "cleaned_response": cleaned_response_no_think}, 500
         except json.JSONDecodeError as e:
-            app.logger.error(f"LLM response was not valid JSON: {e}. Extracted string: '{json_string if 'json_string' in locals() else 'N/A'}'. Raw response: {raw_llm_response}")
-            return {"error": "LLM response was not valid JSON.", "llm_raw": raw_llm_response, "attempted_parse": json_string if 'json_string' in locals() else None}, 500
+            app.logger.error(f"LLM response (after cleaning think tags) was not valid JSON: {e}. Extracted string: '{json_string if json_string else 'N/A'}'. Cleaned response: {cleaned_response_no_think}")
+            return {"error": "LLM response (after cleaning) was not valid JSON.", "llm_raw": raw_llm_response, "cleaned_response": cleaned_response_no_think, "attempted_parse": json_string if json_string else None}, 500
 
         is_valid, validation_msg = validate_llm_json_response(llm_json)
         if not is_valid:
@@ -470,12 +475,18 @@ def handle_action():
     player_action_text = data['action'].strip()
     sim_id = data['sim_id']
     
-    # Call the refactored processing function
     result_data, status_code = process_sim_action(sim_id, player_action_text)
     
     return jsonify(result_data), status_code
 
 if __name__ == '__main__':
-    with app.app_context():
-        initialize_game_world() # Initialize game state on startup
+    # app.run() is for the Flask server. 
+    # Direct initialization for testing here would need a default scenario_data.
+    # For now, initialization is primarily handled by autopilot.py or a direct call with scenario data.
+    # Example: 
+    # with open('scenarios.json', 'r') as f:
+    #     scenarios = json.load(f)
+    # default_scenario = scenarios["default_horace_apartment"]
+    # with app.app_context():
+    # initialize_game_world(default_scenario)
     app.run(debug=True, host='0.0.0.0', port=5001) 
