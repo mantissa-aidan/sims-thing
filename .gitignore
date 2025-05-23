@@ -38,3 +38,6 @@ instance/
 # .dockerignore is preferred for docker build context, but sometimes useful here too
 # logs/
 # *.log 
+__pycache__/app.cpython-36.pyc
+__pycache__/app.cpython-39.pyc
+tests/__pycache__/test_app.cpython-39-pytest-8.3.5.pyc
