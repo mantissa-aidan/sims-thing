@@ -1,3 +1,5 @@
+This project is an attempt to create a sims like text game using LLMs for emergent gameplay and mongodb for state management
+
 # Python Backend with MongoDB, Langchain, and Ollama
 
 This project is a Python-based backend service that integrates with MongoDB for data storage and uses Langchain to interact with a locally hosted Ollama model.

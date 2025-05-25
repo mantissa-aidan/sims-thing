@@ -1,9 +1,6 @@
 Flask
 pymongo
-langchain
-langchain-community
 langchain-ollama
 python-dotenv
-ollama
 pytest
 pytest-mock 

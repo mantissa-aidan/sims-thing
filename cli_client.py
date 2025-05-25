@@ -2,7 +2,7 @@ import requests
 import json
 
 BASE_URL = "http://localhost:5001"
-SIM_ID = "sim_alex" # Default Sim ID, matches app.py
+SIM_ID = "sim_horace" # Default Sim ID, matches app.py
 
 def print_game_state(response_json):
     print("\n--- Narrative ---")
@@ -48,7 +48,7 @@ def main():
         if response.status_code == 200:
             full_state = response.json()
             sim_location = full_state.get("sim", {}).get("location", "Unknown")
-            print(f"\nInitial State: Alex is in the {sim_location}.")
+            print(f"\nInitial State: Horace is in the {sim_location}.")
             # Could print more details from full_state if desired
         else:
             print(f"Error fetching initial state: {response.status_code} - {response.text}")
@@ -58,7 +58,7 @@ def main():
 
     while True:
         try:
-            action_input = input("\nWhat do you want Alex to do? > ")
+            action_input = input("\nWhat do you want Horace to do? > ")
             if action_input.lower() in ["quit", "exit"]:
                 print("Exiting game. Goodbye!")
                 break
