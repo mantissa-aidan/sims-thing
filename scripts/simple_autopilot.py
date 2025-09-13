@@ -33,7 +33,7 @@ def get_sim_id():
 def get_ai_suggestion(sim_id):
     """Get AI suggestion for a sim"""
     try:
-        response = requests.get(f"http://localhost:5001/api/v1/sims/{sim_id}/suggest", timeout=10)
+        response = requests.get(f"http://localhost:5001/api/v1/sims/{sim_id}/suggest", timeout=60)
         if response.status_code == 200:
             return response.json()
         return None
@@ -46,7 +46,7 @@ def process_action(sim_id, action):
         response = requests.post(
             f"http://localhost:5001/api/v1/sims/{sim_id}/action",
             json={"action": action},
-            timeout=10
+            timeout=60
         )
         if response.status_code == 200:
             return response.json()
