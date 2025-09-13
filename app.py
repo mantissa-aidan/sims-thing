@@ -6,6 +6,7 @@ import os
 import json # For parsing LLM JSON responses
 import re # For stripping <think> tags
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -39,6 +40,112 @@ RECOGNIZED_VERBS = [
     "talk to", "say", "ask", # Communication (even if to self for now)
     "peel", "combine" # Crafting/preparation
 ]
+
+def normalize_location_name(location_name, apartment_layout):
+    """
+    Normalize location names to match the case used in apartment layout.
+    Returns the correct case version of the location name, or None if not found.
+    """
+    if not location_name or not apartment_layout or 'zones' not in apartment_layout:
+        return None
+    
+    # First try exact match
+    if location_name in apartment_layout['zones']:
+        return location_name
+    
+    # Try case-insensitive match
+    for zone_name in apartment_layout['zones'].keys():
+        if zone_name.lower() == location_name.lower():
+            return zone_name
+    
+    return None
+
+def get_detailed_object_info(objects_in_zone, objects_in_inventory):
+    """Get detailed information about objects including their valid states."""
+    detailed_info = []
+    
+    for obj in objects_in_zone + objects_in_inventory:
+        states_info = ", ".join([f"{key}: {desc}" for key, desc in obj.get('states', {}).items()])
+        interactions_info = ", ".join(obj.get('interactions', []))
+        detailed_info.append(
+            f"  - {obj['name']} [{obj['_id']}] (current state: {obj.get('current_state_key', 'unknown')})\n"
+            f"    Valid states: {states_info}\n"
+            f"    Interactions: {interactions_info}\n"
+            f"    Properties: {obj.get('properties', {})}"
+        )
+    
+    return "\n".join(detailed_info) if detailed_info else "  (no objects present)"
+
+def validate_action_objects(player_action_text, objects_in_zone, objects_in_inventory):
+    """Validate that all objects referenced in the action actually exist."""
+    import re
+    
+    # Extract all object IDs from the action text
+    object_id_pattern = r'obj_[a-zA-Z0-9_]+'
+    referenced_objects = re.findall(object_id_pattern, player_action_text)
+    
+    # Get all available object IDs
+    available_object_ids = [obj['_id'] for obj in objects_in_zone + objects_in_inventory]
+    
+    # Check if any referenced objects don't exist
+    missing_objects = []
+    for obj_id in referenced_objects:
+        if obj_id not in available_object_ids:
+            missing_objects.append(obj_id)
+    
+    if missing_objects:
+        return False, missing_objects, available_object_ids
+    
+    return True, [], available_object_ids
+
+def get_action_history(sim_id, limit=10):
+    """Get the last N actions for a Sim to provide context."""
+    try:
+        # Get the most recent actions from the sim's history
+        sim_doc = sims_collection.find_one({"_id": sim_id}, {"action_history": 1})
+        if sim_doc and "action_history" in sim_doc:
+            return sim_doc["action_history"][-limit:] if len(sim_doc["action_history"]) > limit else sim_doc["action_history"]
+        return []
+    except Exception as e:
+        app.logger.warning(f"Error getting action history for {sim_id}: {e}")
+        return []
+
+def add_action_to_history(sim_id, action, reason, narrative):
+    """Add an action to the Sim's history."""
+    try:
+        action_entry = {
+            "action": action,
+            "reason": reason,
+            "narrative": narrative,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add to the action history array, keeping only the last 20 entries
+        sims_collection.update_one(
+            {"_id": sim_id},
+            {
+                "$push": {
+                    "action_history": {
+                        "$each": [action_entry],
+                        "$slice": -20  # Keep only the last 20 entries
+                    }
+                }
+            }
+        )
+        app.logger.debug(f"Added action to history for {sim_id}: {action}")
+    except Exception as e:
+        app.logger.warning(f"Error adding action to history for {sim_id}: {e}")
+
+def format_action_history_for_prompt(action_history):
+    """Format action history for inclusion in the AI prompt."""
+    if not action_history:
+        return "No previous actions recorded."
+    
+    formatted_actions = []
+    for i, entry in enumerate(action_history[-10:], 1):  # Show last 10 actions
+        formatted_actions.append(f"{i}. Action: '{entry['action']}' - Reason: {entry['reason']} - Result: {entry['narrative'][:100]}...")
+    
+    return "\\n".join(formatted_actions)
 
 def initialize_game_world(scenario_data):
     app.logger.info(f"Initializing game world with scenario: {scenario_data.get('description', 'No description')}")
@@ -135,10 +242,16 @@ def validate_llm_json_response(llm_json):
     # Add more checks as needed for specific fields within updates
     return True, "Valid JSON structure."
 
-def generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventory, apartment_layout):
+def generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventory, apartment_layout, action_history=None):
     sim_name = sim_state['name']
     sim_location = sim_state['location']
-    zone_description = apartment_layout['zones'][sim_location]['description']
+    
+    # Normalize location name to handle case sensitivity
+    normalized_location = normalize_location_name(sim_location, apartment_layout)
+    if not normalized_location:
+        raise ValueError(f"Invalid location '{sim_location}'. Valid locations: {list(apartment_layout['zones'].keys())}")
+    
+    zone_description = apartment_layout['zones'][normalized_location]['description']
     sim_mood = sim_state['mood']
     needs = sim_state['needs']
     current_activity = sim_state['current_activity']
@@ -151,8 +264,13 @@ def generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventor
     
     available_object_ids = [obj['_id'] for obj in objects_in_zone + objects_in_inventory]
     
-    current_zone_connections = apartment_layout['zones'][sim_location].get('connections', [])
+    current_zone_connections = apartment_layout['zones'][normalized_location].get('connections', [])
     connections_str = ", ".join(current_zone_connections) if current_zone_connections else "nowhere"
+    
+    # Format action history for the prompt
+    history_text = ""
+    if action_history:
+        history_text = f"\\n\\nRECENT ACTION HISTORY (learn from these):\\n{format_action_history_for_prompt(action_history)}\\n"
 
     prompt = (
         f"You are an AI controlling a character named {sim_name} in a simulated world.\\n"
@@ -165,7 +283,15 @@ def generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventor
         f"- Inventory: {inventory_str}.\\n"
         f"- Objects in {sim_location}: {zone_objects_str}.\\n"
         f"- Available Object IDs for interaction: {str(available_object_ids)}.\\n"
-        f"- Can move from {sim_location} to: {connections_str}.\\n\\n"
+        f"- Can move from {sim_location} to: {connections_str}.\\n{history_text}"
+        f"CRITICAL RULES - READ CAREFULLY:\\n"
+        f"1. VALID LOCATION NAMES (use EXACTLY as shown): {', '.join(apartment_layout['zones'].keys())}\\n"
+        f"2. ONLY interact with objects that are ACTUALLY PRESENT in the current location or inventory\\n"
+        f"3. If no food objects are visible, you CANNOT eat anything - look for food in other locations first\\n"
+        f"4. If no bed/sofa is visible, you CANNOT sleep - find a suitable location first\\n"
+        f"5. Object IDs must be EXACTLY as shown in the 'Available Object IDs' list\\n"
+        f"6. DO NOT invent objects that don't exist - if you want to eat something, first check if food is available\\n"
+        f"7. If no suitable objects are available for your desired action, choose a different action\\n\\n"
         f"PRIORITIZE ACTIONS BASED ON NEEDS. For example:\\n"
         f"- If hunger is low (e.g., < 40), try to find and eat food.\\n"
         f"- If energy is low (e.g., < 40), try to sleep or rest.\\n"
@@ -188,7 +314,10 @@ def get_llm_suggested_action(sim_id):
         # app.logger.error(f"Cannot generate action for non-existent sim_id: {sim_id}") # Already WARNING in autopilot
         return None
 
-    prompt = generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventory, apartment_layout)
+    # Get action history for context
+    action_history = get_action_history(sim_id)
+    
+    prompt = generate_sim_decision_prompt(sim_state, objects_in_zone, objects_in_inventory, apartment_layout, action_history)
     # app.logger.debug(f"Action Generation Prompt for {sim_id}:\\n{prompt}") # Commented out
 
     try:
@@ -211,8 +340,31 @@ def get_llm_suggested_action(sim_id):
                     action = str(parsed_json["action"]).strip()
                     reason = str(parsed_json["reason"]).strip()
                     if action: # Ensure action is not empty
-                        app.logger.info(f"LLM suggested action for {sim_id}: '{action}' because '{reason}'")
-                        return {"action": action, "reason": reason}
+                        # Validate that the action doesn't reference non-existent objects
+                        is_valid, missing_objects, available_object_ids = validate_action_objects(action, objects_in_zone, objects_in_inventory)
+                        if not is_valid:
+                            app.logger.warning(f"LLM suggested invalid action for {sim_id}: '{action}' - objects {missing_objects} don't exist. Available: {available_object_ids}")
+                            # Return a fallback action instead
+                            available_objects = [obj['name'] for obj in objects_in_zone + objects_in_inventory]
+                            if available_objects:
+                                fallback_action = f"examine {available_objects[0]}"
+                                fallback_reason = f"Looking at available objects since {', '.join(missing_objects)} don't exist"
+                                app.logger.info(f"Using fallback action for {sim_id}: '{fallback_action}' because '{fallback_reason}'")
+                                # Record the fallback action in history
+                                add_action_to_history(sim_id, fallback_action, fallback_reason, "Fallback action taken due to invalid object reference")
+                                return {"action": fallback_action, "reason": fallback_reason}
+                            else:
+                                fallback_action = f"go to {list(apartment_layout['zones'].keys())[0]}"
+                                fallback_reason = "No objects available in current location, moving to explore"
+                                app.logger.info(f"Using fallback action for {sim_id}: '{fallback_action}' because '{fallback_reason}'")
+                                # Record the fallback action in history
+                                add_action_to_history(sim_id, fallback_action, fallback_reason, "Fallback action taken - no objects available")
+                                return {"action": fallback_action, "reason": fallback_reason}
+                        else:
+                            app.logger.info(f"LLM suggested action for {sim_id}: '{action}' because '{reason}'")
+                            # Record the AI-suggested action in history
+                            add_action_to_history(sim_id, action, reason, "AI-suggested action")
+                            return {"action": action, "reason": reason}
             
             # If direct JSON block parsing failed or didn't find the right keys
             app.logger.warning(f"Could not parse valid action/reason JSON from LLM response for {sim_id} after stripping think tags. Cleaned response: {cleaned_response_no_think}. Extracted JSON string: {json_string}")
@@ -302,8 +454,13 @@ def process_sim_action(sim_id, player_action_text):
 
             new_sim_activity = f"moving to {matched_zone_name}"
             sims_collection.update_one({"_id": sim_id}, {"$set": {"location": matched_zone_name, "current_activity": new_sim_activity}})
+            
+            narrative = f"{sim_state['name']} walks from the {current_zone_name} to the {matched_zone_name}."
+            # Record the movement action in history
+            add_action_to_history(sim_id, player_action_text, f"Successfully moved to {matched_zone_name}", narrative)
+            
             return {
-                "narrative": f"{sim_state['name']} walks from the {current_zone_name} to the {matched_zone_name}.",
+                "narrative": narrative,
                 "sim_state_updates": {"location": matched_zone_name, "current_activity": new_sim_activity},
                 "environment_updates": environment_updates_for_go, # Include updates for vacated objects
                 "available_actions": [f"look around in {matched_zone_name}", f"examine <object in {matched_zone_name}>"],
@@ -311,19 +468,53 @@ def process_sim_action(sim_id, player_action_text):
         else:
             return {"narrative": f"You can't go directly to {target_zone_input} from {current_zone_name}. Possible exits: {', '.join(current_zone_details.get('connections',[]))}"}, 200
     
+    # --- Pre-validate action objects ---
+    is_valid, missing_objects, available_object_ids = validate_action_objects(player_action_text, objects_in_zone, objects_in_inventory)
+    
+    if not is_valid:
+        available_objects_str = ", ".join([f"{obj['name']} [{obj['_id']}]" for obj in objects_in_zone + objects_in_inventory])
+        narrative = f"{sim_state['name']} looks around but can't find {', '.join(missing_objects)}. Available objects: {available_objects_str if available_objects_str else 'none'}."
+        
+        # Record the failed action in history
+        add_action_to_history(sim_id, player_action_text, f"Failed - objects {missing_objects} not found", narrative)
+        
+        return {
+            "narrative": narrative,
+            "sim_state_updates": {"mood": "confused"},
+            "environment_updates": [],
+            "available_actions": [f"look around in {sim_state['location']}", f"examine <available object>"]
+        }, 200
+
     # --- Construct Prompt for LLM (demanding JSON) ---
     objects_in_zone_str = ", ".join([f"{obj['name']} ({obj['states'][obj['current_state_key']]}) [{obj['_id']}]" for obj in objects_in_zone]) if objects_in_zone else "nothing notable"
     objects_in_inventory_str = ", ".join([f"{obj['name']} ({obj['states'][obj['current_state_key']]}) [{obj['_id']}]" for obj in objects_in_inventory]) if objects_in_inventory else "empty"
     available_object_ids_str = str([obj['_id'] for obj in objects_in_zone + objects_in_inventory])
 
+    # Normalize location name to handle case sensitivity
+    normalized_location = normalize_location_name(sim_state['location'], apartment_layout)
+    if not normalized_location:
+        return {"error": f"Sim's current location '{sim_state['location']}' is invalid. Valid locations: {list(apartment_layout['zones'].keys())}"}, 400
+
+    # Get detailed object information
+    detailed_objects_info = get_detailed_object_info(objects_in_zone, objects_in_inventory)
+    
     prompt_context = (
         f"The Sim, {sim_state['name']}, is in the {sim_state['location']}.\n"
-        f"Description of current zone ({sim_state['location']}): {apartment_layout['zones'][sim_state['location']]['description']}.\n"
-        f"Sim's current mood: {sim_state['mood']}. Needs: Hunger {sim_state['needs']['hunger']}, Energy {sim_state['needs']['energy']}.\n"
-        f"Objects in this zone (object_name (current_state) [object_id]): [{objects_in_zone_str}].\n"
-        f"Sim's inventory (object_name (current_state) [object_id]): [{objects_in_inventory_str}].\n"
-        f"Available object IDs in current context (zone and inventory): {available_object_ids_str}.\n\n"
+        f"Description of current zone ({sim_state['location']}): {apartment_layout['zones'][normalized_location]['description']}.\n"
+        f"Sim's current mood: {sim_state['mood']}. Needs: Hunger {sim_state['needs']['hunger']}, Energy {sim_state['needs']['energy']}.\n\n"
+        f"DETAILED OBJECT INFORMATION:\n{detailed_objects_info}\n\n"
+        f"Available object IDs in current context (zone and inventory): {available_object_ids_str}.\n"
+        f"Valid location names: {', '.join(apartment_layout['zones'].keys())}\n\n"
         f"Player action: '{player_action_text}'\n\n"
+        f"CRITICAL RULES - FOLLOW THESE EXACTLY:\n"
+        f"1. ONLY use object IDs that are listed in 'Available object IDs' - DO NOT invent new objects\n"
+        f"2. ONLY use location names from the 'Valid location names' list - DO NOT use variations like 'kitchen' instead of 'Kitchenette'\n"
+        f"3. ONLY use state keys that are listed in the 'Valid states' for each object - DO NOT invent new states\n"
+        f"4. If an object is not present in the current location or inventory, the Sim CANNOT interact with it\n"
+        f"5. If trying to eat something, it must have 'edible' property or be clearly food-related\n"
+        f"6. If trying to sleep, there must be a bed or sofa present\n"
+        f"7. When an object is consumed/eaten (like food), set 'consumed': true to remove it from the world\n"
+        f"8. For edible objects that are consumed, also update hunger needs appropriately\n\n"
         f"Your primary goal is to determine the outcome of this action. Respond in a narrative-driven way.\n"
         f"1. For sensible actions: Describe a realistic outcome and make appropriate state changes (mood, needs, object states, inventory) consistent with the Sim's abilities and object properties.\n"
         f"2. For actions that are illogical or interact with objects in unintended ways (e.g., 'talk to lamp', 'peel the fridge'): Describe the Sim's attempt, perhaps humorously. State changes should be minimal (e.g., mood change to 'confused' or 'amused', slight energy use). Do NOT change fundamental object states or Sim needs in ways that defy logic (e.g., hunger decreasing from 'eating' a computer).\n"
@@ -335,7 +526,7 @@ def process_sim_action(sim_id, player_action_text):
         f"  \"sim_state_updates\": {{\n"
         f"    \"location\": \"(string, new zone name if changed, otherwise null)\",\n"
         f"    \"mood\": \"(string, new mood if changed, otherwise null)\",\n"
-        f"    \"needs_delta\": {{ \"hunger\": <int>, \"energy\": <int>, \"fun\": <int> }} (changes to needs, e.g. hunger: -10 means less hungry; only include needs that changed, 0 if no change to a specific need but other needs changed),\n"
+        f"    \"needs_delta\": {{ \"hunger\": <int>, \"energy\": <int>, \"fun\": <int> }} (changes to needs, e.g. hunger: -10 means less hungry, energy: 20 means more energy; use integers only, no + signs; only include needs that changed, 0 if no change to a specific need but other needs changed),\n"
         f"    \"inventory_add\": \"(string, ID of object added, e.g., obj_banana, MUST be from 'Available object IDs' list or a newly created/transformed object ID, otherwise null)\",\n"
         f"    \"inventory_remove\": \"(string, ID of object removed, e.g., obj_banana_peel, MUST be from 'Available object IDs' list, otherwise null)\",\n"
         f"    \"current_activity\": \"(string, brief description of new activity, otherwise null)\"\n"
@@ -347,7 +538,8 @@ def process_sim_action(sim_id, player_action_text):
         f"      \"new_state_key\": \"(string, key of new state for the object, from its defined states, otherwise null)\", \n"
         f"      \"new_zone\": \"(string, new zone ID if object moved, e.g., inventory_{sim_id} or another zone ID, otherwise null)\", \n"
         f"      \"add_to_contains\": \"(string, ID of object to add to this object's container, MUST be from 'Available object IDs' or new, otherwise null)\", \n"
-        f"      \"remove_from_contains\": \"(string, ID of object to remove from this object's container, MUST be from 'Available object IDs', otherwise null)\" \n"
+        f"      \"remove_from_contains\": \"(string, ID of object to remove from this object's container, MUST be from 'Available object IDs', otherwise null)\", \n"
+        f"      \"consumed\": (boolean, true if the object is consumed/eaten and should be removed from the world, otherwise null)\n"
         f"    }}\n"
         f"    // ... more objects if affected. Only include objects that actually change.\n"
         f"  ],\n"
@@ -355,11 +547,16 @@ def process_sim_action(sim_id, player_action_text):
         f"}}\n"
         f"CRITICAL: Ensure the JSON is complete and well-formed. No other text before or after the JSON.\n"
         f"Object ID Usage: When updating `sim_state_updates` (inventory) or `environment_updates` (object_id, add_to_contains, remove_from_contains), YOU MUST use the exact object IDs (e.g., `obj_banana`, `obj_fridge`) provided in the 'Objects in this zone' or 'Sim\'s inventory' lists, or a new ID if an object is created/transformed. Do NOT use object names.\n\n"
-        f"Example of correct Object ID usage if Hoarace takes Banana (obj_banana) from Fridge (obj_fridge):\n"
+        f"Example of correct Object ID usage if Horace takes Banana (obj_banana) from Fridge (obj_fridge):\n"
         f"  \"sim_state_updates\": {{ ... \"inventory_add\": \"obj_banana\" ... }},\n"
         f"  \"environment_updates\": [\n"
         f"    {{ \"object_id\": \"obj_fridge\", \"new_state_key\": null, \"new_zone\": null, \"add_to_contains\": null, \"remove_from_contains\": \"obj_banana\" }}, // Fridge contents changed\n"
         f"    {{ \"object_id\": \"obj_banana\", \"new_state_key\": null, \"new_zone\": \"inventory_{sim_id}\", \"add_to_contains\": null, \"remove_from_contains\": null }}  // Banana location changed\n"
+        f"  ]\n\n"
+        f"Example of consuming an object (eating a banana):\n"
+        f"  \"sim_state_updates\": {{ ... \"needs_delta\": {{ \"hunger\": -30 }} ... }},\n"
+        f"  \"environment_updates\": [\n"
+        f"    {{ \"object_id\": \"obj_banana\", \"new_state_key\": null, \"new_zone\": null, \"add_to_contains\": null, \"remove_from_contains\": null, \"consumed\": true }}  // Banana is eaten and removed\n"
         f"  ]\n\n"
         f"If an action is valid but has no major effect (e.g., \"look at wall\"), the narrative should reflect that, and state_updates can be minimal or null.\n"
         f"Now, process the action: '{player_action_text}'"
@@ -406,7 +603,12 @@ def process_sim_action(sim_id, player_action_text):
     sim_updates = llm_json.get("sim_state_updates", {})
     db_sim_update_ops = {}
     if sim_updates.get("location"):
-        db_sim_update_ops["location"] = sim_updates["location"]
+        # Normalize location name to handle case sensitivity
+        normalized_location = normalize_location_name(sim_updates["location"], apartment_layout)
+        if normalized_location:
+            db_sim_update_ops["location"] = normalized_location
+        else:
+            app.logger.warning(f"LLM proposed invalid location '{sim_updates['location']}'. Valid locations: {list(apartment_layout['zones'].keys())}. Location not changed.")
     if sim_updates.get("mood"):
         db_sim_update_ops["mood"] = sim_updates["mood"]
     if sim_updates.get("current_activity"):
@@ -460,9 +662,19 @@ def process_sim_action(sim_id, player_action_text):
         if update_info.get("remove_from_contains"):
             environment_collection.update_one({"_id": obj_id}, {"$pull": {"contains": update_info["remove_from_contains"]}})
 
+        # Handle object consumption - if an object is marked as consumed, remove it from the world
+        if update_info.get("consumed") == True:
+            app.logger.info(f"Object {obj_id} ({target_object.get('name')}) has been consumed and will be removed from the world")
+            environment_collection.delete_one({"_id": obj_id})
+            continue  # Skip the normal update since we're deleting the object
+
         if db_env_update_ops:
             environment_collection.update_one({"_id": obj_id}, {"$set": db_env_update_ops})
             app.logger.debug(f"Applied Env object update for {obj_id}: {db_env_update_ops}")
+
+    # Record the action in history
+    narrative = llm_json.get("narrative", "Action completed")
+    add_action_to_history(sim_id, player_action_text, "Player action", narrative)
 
     return llm_json, 200
 

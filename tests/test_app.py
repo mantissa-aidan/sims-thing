@@ -427,6 +427,46 @@ def test_action_go_vacates_sofa(client):
         sim_after = sims_collection.find_one({"_id": TEST_SIM_ID})
         assert sim_after["location"] == target_zone, "Sim should be in the target_zone"
 
+def test_location_case_sensitivity_handling(client, mocker):
+    """Test that the system handles case sensitivity issues in location names."""
+    # This test simulates the bug where AI returns lowercase location names
+    # but the apartment layout expects title case
+    
+    mock_llm_response = {
+        "narrative": "Horace moves to the living area.",
+        "sim_state_updates": {
+            "location": "living area",  # lowercase - this should be handled gracefully
+            "mood": "neutral",
+            "needs_delta": {},
+            "inventory_add": None,
+            "inventory_remove": None,
+            "current_activity": "moving around"
+        },
+        "environment_updates": [],
+        "available_actions": ["look around", "sit down"]
+    }
+    mocker.patch('app.OllamaLLM.invoke', return_value=json.dumps(mock_llm_response))
+
+    action_payload = {"sim_id": TEST_SIM_ID, "action": "go to living area"}
+    response = client.post('/game/action', json=action_payload)
+    
+    # The system should handle this gracefully - either normalize the case or return an error
+    # but not crash with a KeyError
+    assert response.status_code in [200, 400, 500], "Should not crash with KeyError"
+    
+    if response.status_code == 200:
+        data = json.loads(response.data)
+        # The system should recognize that "living area" is the same as "Living Area"
+        # and provide a proper response (either movement or explanation)
+        assert "narrative" in data
+        # Should not contain KeyError in the response
+        assert "KeyError" not in str(data)
+    else:
+        # If error, should be a proper error message, not a KeyError
+        data = json.loads(response.data)
+        assert "error" in data
+        assert "KeyError" not in str(data["error"])
+
 # TODO: Add tests for LLM interactions (these will be more complex and might require mocking the LLM call)
 # For example:
 # - Test successful LLM JSON parsing

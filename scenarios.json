@@ -6,7 +6,7 @@
       "name": "Horace",
       "location": "Living Area",
       "mood": "neutral",
-      "needs": {"hunger": 50, "energy": 70, "social": 60, "fun": 40},
+      "needs": {"hunger": 0, "energy": 70, "social": 60, "fun": 0},
       "inventory": [],
       "current_activity": "idle"
     },

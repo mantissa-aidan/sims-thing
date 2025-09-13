@@ -16,7 +16,7 @@ if flask_app:
 stop_animation_event = threading.Event()
 
 def animate(label="Thinking", animation_start_time=None):
-    chars = "-\\\|/"
+    chars = r"-\\|/"
     idx = 0
     if animation_start_time is None:
         animation_start_time = time.monotonic() # Fallback, though should always be passed
