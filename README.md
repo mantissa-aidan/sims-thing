@@ -1,217 +1,217 @@
-This project is an attempt to create a sims like text game using LLMs for emergent gameplay and mongodb for state management
+# Sims Thing - Emergent AI Simulation
 
-# Python Backend with MongoDB, Langchain, and Ollama
+A sophisticated AI-powered simulation system that creates emergent storytelling through intelligent character behavior and dynamic world interactions.
 
-This project is a Python-based backend service that integrates with MongoDB for data storage and uses Langchain to interact with a locally hosted Ollama model.
+## 🌟 Features
 
-## Prerequisites
+- **Emergent Storytelling**: AI characters make intelligent decisions that create unique, evolving narratives
+- **Dynamic World State**: Objects are consumed, moved, and transformed based on character actions
+- **Action History System**: Characters learn from their previous actions and adapt their behavior
+- **Pre-validation**: Robust error handling prevents invalid interactions
+- **RESTful API**: Clean API endpoints for easy UI integration
+- **Docker Support**: Easy deployment with Docker and Docker Compose
 
-- Python 3.8+
-- Pip (Python package installer)
-- MongoDB instance running (local or remote)
-- Ollama service running and accessible (e.g., at `http://192.168.0.190:11434`)
-  - Ensure you have pulled a model, e.g., `ollama pull llama2`
-
-## Setup
-
-1.  **Clone the repository (if applicable):**
-    ```bash
-    git clone <your-repo-url>
-    cd <your-repo-name>
-    ```
-
-2.  **Create a virtual environment (recommended):**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
-
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  **Configure Environment Variables:**
-    Create a `.env` file in the root of the project directory and add the following variables. Update them according to your setup:
-    ```env
-    MONGODB_URI="mongodb://host.docker.internal:27017/sims_mud_db"
-    OLLAMA_BASE_URL="http://192.168.0.190:11434"
-    OLLAMA_MODEL="qwen2:8b"
-    FLASK_APP="app.py"
-    FLASK_DEBUG="1"
-    ```
-    - Use `host.docker.internal` for `MONGODB_URI` (or `OLLAMA_BASE_URL`) if the service (MongoDB/Ollama) is running directly on the same machine that is running Docker Desktop (Mac/Windows).
-    - If Ollama (or MongoDB) is running on a different machine on your local network, use its specific IP address (e.g., `http://192.168.0.190:11434` as shown for Ollama).
-    - If Ollama and MongoDB are running as other Docker containers managed by the same Docker Compose file (not the case here), you would typically use the service names (e.g., `http://ollama:11434`).
-
-## Running the Application
-
-1.  **Ensure your MongoDB server is running.**
-2.  **Ensure your Ollama service is running and the specified model in `app.py` (default: `llama2`) is available.**
-    You can run Ollama with a specific model using:
-    ```bash
-    ollama serve
-    # In another terminal, if you haven't pulled the model:
-    # ollama pull llama2 
-    ```
-
-3.  **Start the Flask application:**
-    ```bash
-    python app.py
-    ```
-    The application will typically start on `http://0.0.0.0:5001`.
-
-## Dockerizing the Application
-
-This application can be containerized using Docker. While you can use `docker build` and `docker run` directly (see older instructions below if needed), the recommended method is using Docker Compose.
-
-**Using Docker Compose (Recommended)**
-
-Two Docker Compose files are provided:
-- `docker-compose.yml`: For running the main application.
-- `docker-compose.test.yml`: For running tests.
-
-1.  **Environment Variables (`.env` file):**
-    Make sure you have a `.env` file in the root of your project. Docker Compose will load this. Key variables:
-    ```env
-    # MONGODB_URI is now typically set within the docker-compose.yml files to 'mongodb://mongo:27017/sims_mud_db'
-    # to connect to the MongoDB service also managed by Docker Compose.
-    # You can still have it here for reference or for running app.py outside Docker Compose.
-    # MONGODB_URI="mongodb://localhost:27017/sims_mud_db"
-
-    OLLAMA_BASE_URL="http://192.168.0.190:11434" # Your actual Ollama IP and port
-    OLLAMA_MODEL="qwen2:8b" # Specify the Ollama model to use (default in app.py is qwen2:8b)
-    FLASK_APP="app.py"
-    FLASK_DEBUG="1"
-    ```
-    - `OLLAMA_BASE_URL`: If Ollama is running on a different machine on your local network, use its specific IP address. If it were running on the same machine as Docker Desktop (and not in another container managed by compose), you might use `http://host.docker.internal:11434`.
-    - `OLLAMA_MODEL`: Specifies which model Ollama should serve. Ensure this model is available in your Ollama instance (e.g., via `ollama pull qwen2:8b`).
-    - The `app` and `test` services in the `docker-compose*.yml` files are configured to connect to a MongoDB container named `mongo` using `MONGODB_URI=mongodb://mongo:27017/sims_mud_db`.
-
-2.  **Running the Application (with MongoDB):**
-    ```bash
-    docker-compose up --build
-    ```
-    This command will now also start a MongoDB container if it's not already running. The application service (`app`) will wait for the MongoDB service (`mongo`) to be available before starting (due to `depends_on`).
-
-3.  **Running Tests (with MongoDB):**
-    ```bash
-    docker-compose -f docker-compose.test.yml up --build --exit-code-from test --remove-orphans test
-    ```
-    This will also start a MongoDB container (or connect to an existing one if defined with the same service name and network, though here we use `sims-thing-mongo-test` container name and `mongo` service name). The tests will run against this database, and only the test runner's output will be shown. The command will also exit with the test suite's exit code and clean up containers afterwards.
-
-**(Older) Docker Build and Run Instructions (using `run.sh` or manual commands):**
-
-1.  **Build the Docker image:**
-    Make sure you are in the root directory of the project (where the `Dockerfile` is located).
-    ```bash
-    docker build -t sims-thing .
-    ```
-
-2.  **Run the Docker container:**
-    You need to pass the `MONGODB_URI` and `OLLAMA_BASE_URL` environment variables when running the container. 
-    Replace `your_mongodb_connection_string` and `your_ollama_base_url` with your actual values.
-    ```bash
-    docker run -p 5001:5001 \
-        -e MONGODB_URI="your_mongodb_connection_string" \
-        -e OLLAMA_BASE_URL="your_ollama_base_url" \
-        sims-thing
-    ```
-    For example, using the default local values:
-    ```bash
-    docker run -p 5001:5001 \
-        -e MONGODB_URI="mongodb://host.docker.internal:27017/mydatabase" \
-        -e OLLAMA_BASE_URL="http://host.docker.internal:11434" \
-        sims-thing
-    ```
-    **Note for Docker Desktop users (Windows/Mac):** `host.docker.internal` can be used to refer to services running on your host machine from within the container. 
-    If Ollama or MongoDB are running on a different machine accessible from your Docker host, use its IP address.
-
-    The application inside the container will be accessible at `http://localhost:5001` on your host machine.
-
-3.  **Using the `run.sh` script (Recommended):**
-    A convenience script `run.sh` is provided to automate the build and run process.
-    Make sure it's executable: `chmod +x run.sh`
-
-    To run with default settings (MongoDB and Ollama accessible via `host.docker.internal`):
-    ```bash
-    ./run.sh
-    ```
-
-    To provide custom URIs:
-    ```bash
-    ./run.sh "your_mongodb_connection_string" "your_ollama_base_url"
-    ```
-    For example:
-    ```bash
-    ./run.sh "mongodb://myuser:mypass@192.168.1.100:27017/mydb" "http://192.168.1.101:11434"
-    ```
-    The script will stop and remove any existing container named `sims-thing-container` before starting a new one.
-
-## API Endpoints
-
--   `GET /`
-    -   A simple welcome message.
--   `GET /test_db`
-    -   Tests the connection to the MongoDB database.
--   `POST /ask`
-    -   Interacts with the Ollama model via Langchain.
-    -   **Request Body (JSON):**
-        ```json
-        {
-            "query": "Your question for the LLM"
-        }
-        ```
-    -   **Success Response (JSON):**
-        ```json
-        {
-            "response": "LLM's answer..."
-        }
-        ```
-    -   **Error Response (JSON):**
-        ```json
-        {
-            "error": "Error message..."
-        }
-        ```
-
-## Testing
-
-This project uses `pytest` for testing. The recommended way to run tests is using Docker Compose (see "Dockerizing the Application" section).
-
-If you want to run tests in a local Python virtual environment (ensure MongoDB is accessible):
-
-1.  **Create and activate a virtual environment (if not done):**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate # or venv\Scripts\activate on Windows
-    ```
-2.  **Install dependencies (including pytest):**
-    ```bash
-    pip install pytest
-    # or pip install -r requirements.txt if you are in an active venv
-    ```
-
-## Project Structure
+## 🏗️ Architecture
 
 ```
-/
-|-- app.py                  # Main Flask application file
-|-- requirements.txt        # Python dependencies
-|-- .env                    # Environment variables (create this manually)
-|-- project_checklist.md    # Project setup and task checklist
-|-- README.md               # This file
-|-- Dockerfile              # Docker build instructions
-|-- run.sh                  # Script to build and run the Docker container
-|-- tests/                  # Test files
-|   |-- test_app.py         # Application tests
-|-- venv/                   # Virtual environment directory (optional, if created)
+src/
+├── api/           # API routes and endpoints
+├── models/        # Data models and schemas
+├── utils/         # Utility functions and validation
+├── config.py      # Application configuration
+├── database.py    # Database connection and collections
+└── game_engine.py # Core game logic and AI integration
+
+scripts/           # Autopilot and utility scripts
+docs/             # Documentation
+tests/            # Test suite
 ```
 
-## Further Development
+## 🚀 Quick Start
 
--   Implement more robust error handling.
--   Add more specific API endpoints for your application's needs.
--   Expand MongoDB models and interactions.
--   Consider using Flask Blueprints for better organization as the app grows.
--   Add unit and integration tests. 
+### Prerequisites
+- Python 3.9+
+- MongoDB
+- Ollama (with Gemma 3:12b model)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd sims-thing
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. **Start MongoDB**
+   ```bash
+   # Using Docker
+   docker run -d -p 27017:27017 mongo:latest
+   
+   # Or using local installation
+   mongod
+   ```
+
+5. **Start Ollama**
+   ```bash
+   ollama serve
+   ollama pull gemma3:12b
+   ```
+
+6. **Run the application**
+   ```bash
+   python app_clean.py
+   ```
+
+### Using Docker Compose
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+## 🎮 Usage
+
+### API Endpoints
+
+The application provides a RESTful API for interacting with the simulation:
+
+- `GET /api/v1/health` - Health check
+- `GET /api/v1/sims` - List all Sims
+- `GET /api/v1/sims/{sim_id}` - Get Sim details
+- `GET /api/v1/sims/{sim_id}/state` - Get current game state
+- `POST /api/v1/sims/{sim_id}/action` - Process an action
+- `GET /api/v1/sims/{sim_id}/suggest` - Get AI-suggested action
+- `GET /api/v1/sims/{sim_id}/history` - Get action history
+
+See [API Documentation](docs/API.md) for detailed endpoint information.
+
+### Example API Usage
+
+```bash
+# Get all Sims
+curl http://localhost:5001/api/v1/sims
+
+# Get Sim state
+curl http://localhost:5001/api/v1/sims/sim_horace/state
+
+# Process an action
+curl -X POST http://localhost:5001/api/v1/sims/sim_horace/action \
+  -H "Content-Type: application/json" \
+  -d '{"action": "sit on obj_sofa"}'
+
+# Get AI suggestion
+curl http://localhost:5001/api/v1/sims/sim_horace/suggest
+```
+
+### Autopilot Mode
+
+Run the simulation automatically:
+
+```bash
+# Using the autopilot script
+python scripts/run_autopilot.py
+
+# Or with custom parameters
+python scripts/watch_story.py
+```
+
+## 🧠 How It Works
+
+### AI Decision Making
+- Characters analyze their current state (needs, mood, location)
+- AI considers available objects and previous actions
+- Decisions are made based on character needs and logical reasoning
+- Actions are validated before execution
+
+### World State Management
+- Objects can be consumed, moved, or transformed
+- Character inventory and location are tracked
+- Action history influences future decisions
+- Dynamic world changes create emergent narratives
+
+### Action Processing
+1. **Pre-validation**: Check if objects exist and actions are valid
+2. **AI Processing**: Generate narrative and state changes
+3. **State Updates**: Apply changes to character and world
+4. **History Recording**: Store action for future reference
+
+## 🎭 Emergent Storytelling
+
+The system creates unique stories through:
+
+- **Resource Scarcity**: Characters must adapt when food runs out
+- **Logical Progression**: Actions follow natural cause-and-effect
+- **Character Development**: Moods and needs change based on experiences
+- **Environmental Interaction**: World state affects available options
+- **Learning Behavior**: Characters remember and learn from past actions
+
+## 🔧 Configuration
+
+### Environment Variables
+
+```bash
+# Database
+MONGODB_URI=mongodb://localhost:27017/sims_mud_db
+
+# AI Model
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gemma3:12b
+
+# Flask
+FLASK_DEBUG=1
+```
+
+### Scenarios
+
+Scenarios define the initial world state and character setup. See `scenarios.json` for examples.
+
+## 🧪 Testing
+
+```bash
+# Run tests
+pytest tests/
+
+# Run with coverage
+pytest --cov=src tests/
+```
+
+## 📚 Documentation
+
+- [API Documentation](docs/API.md) - Complete API reference
+- [Architecture Guide](docs/ARCHITECTURE.md) - System design overview
+- [Development Guide](docs/DEVELOPMENT.md) - Contributing guidelines
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙏 Acknowledgments
+
+- Built with Flask and MongoDB
+- AI powered by Ollama and Gemma 3:12b
+- Inspired by The Sims and emergent gameplay concepts

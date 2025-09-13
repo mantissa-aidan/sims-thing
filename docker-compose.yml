@@ -14,12 +14,12 @@ services:
       - .env    # Load environment variables from .env file
     environment:
       # You can provide defaults here if .env is missing, or override .env vars
-      - FLASK_APP=app_clean.py
+      - FLASK_APP=app.py
       - FLASK_DEBUG=1 # Ensure Flask runs in debug mode for hot reloading
       # MONGODB_URI will now point to the mongo service within Docker
       - MONGODB_URI=mongodb://mongo:27017/sims_mud_db
       # OLLAMA_BASE_URL will be taken from .env
-    command: python app_clean.py
+    command: python app.py
     depends_on:
       - mongo # Ensures mongo starts before the app
 

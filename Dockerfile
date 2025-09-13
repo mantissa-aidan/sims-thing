@@ -1,31 +1,34 @@
-# Use an official Python runtime as a parent image
+# Production-ready Dockerfile for Sims Thing
 FROM python:3.9-slim
 
-# Add Python's user script directory to PATH to find executables like pytest
-ENV PATH="/root/.local/bin:${PATH}"
-
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Copy the dependencies file to the working directory
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
-# Using --user can sometimes help with permissions and pathing for executables
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code to the working directory
+# Copy application code
 COPY . .
 
-# Make port 5001 available to the world outside this container
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash app \
+    && chown -R app:app /app
+USER app
+
+# Expose port
 EXPOSE 5001
 
-# Define environment variables for Flask. FLASK_DEBUG for development.
-ENV FLASK_APP=app.py
-ENV FLASK_DEBUG=1
-# FLASK_RUN_HOST and FLASK_RUN_PORT are set in the CMD or docker-compose command
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5001/api/v1/health || exit 1
 
-# Command to run the application
-CMD ["flask", "run", "--host=0.0.0.0", "--port=5001"]
-
-# Note: MONGODB_URI and OLLAMA_BASE_URL should be passed at runtime or via docker-compose for security and flexibility. 
+# Run the application
+CMD ["python", "app.py"]
