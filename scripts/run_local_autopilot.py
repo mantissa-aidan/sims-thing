@@ -9,6 +9,10 @@ import sys
 import subprocess
 import time
 import json
+
+# Add the parent directory to the Python path so we can import autopilot
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from autopilot import run_autopilot_simulation
 
 def setup_local_environment():

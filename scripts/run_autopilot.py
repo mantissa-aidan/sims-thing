@@ -9,8 +9,12 @@ import time
 import signal
 import sys
 import os
-from autopilot import run_autopilot_simulation
 import json
+
+# Add the parent directory to the Python path so we can import autopilot
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from autopilot import run_autopilot_simulation
 
 def start_flask_app():
     """Start the Flask app in the background."""
