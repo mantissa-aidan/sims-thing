@@ -1,16 +1,109 @@
 #!/usr/bin/env python3
 """
-Interactive script to watch the Sims story unfold with different configurations.
+Interactive script to watch the Sims story unfold with the new API.
 """
 
-import os
-import sys
+import requests
+import time
 import json
 
-# Add the parent directory to the Python path so we can import autopilot
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+def check_api_health():
+    """Check if the API is running"""
+    try:
+        response = requests.get("http://localhost:5001/api/v1/health", timeout=5)
+        return response.status_code == 200
+    except:
+        return False
 
-from autopilot import run_autopilot_simulation
+def get_sim_state(sim_id):
+    """Get current sim state"""
+    try:
+        response = requests.get(f"http://localhost:5001/api/v1/sims/{sim_id}", timeout=5)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except:
+        return None
+
+def get_ai_suggestion(sim_id):
+    """Get AI suggestion for next action"""
+    try:
+        response = requests.get(f"http://localhost:5001/api/v1/sims/{sim_id}/suggest", timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except:
+        return None
+
+def process_action(sim_id, action):
+    """Process an action for the sim"""
+    try:
+        response = requests.post(
+            f"http://localhost:5001/api/v1/sims/{sim_id}/action",
+            json={"action": action},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except:
+        return None
+
+def display_sim_state(sim_state):
+    """Display the current sim state"""
+    if not sim_state:
+        print("❌ Could not get sim state")
+        return
+    
+    print(f"📍 Location: {sim_state.get('location', 'Unknown')}")
+    print(f"😊 Mood: {sim_state.get('mood', 'Unknown')}")
+    needs = sim_state.get('needs', {})
+    print(f"🍎 Hunger: {needs.get('hunger', 0)}/100")
+    print(f"⚡ Energy: {needs.get('energy', 0)}/100")
+    print(f"🎮 Fun: {needs.get('fun', 0)}/100")
+    print(f"👥 Social: {needs.get('social', 0)}/100")
+
+def run_autopilot_simulation(sim_id, num_turns=10, turn_delay_seconds=2):
+    """Run the autopilot simulation"""
+    print(f"🎮 Starting Autopilot for {sim_id}")
+    print(f"📊 Running {num_turns} turns with {turn_delay_seconds}s delay")
+    print("=" * 50)
+    
+    for turn in range(1, num_turns + 1):
+        print(f"\n--- Turn {turn}/{num_turns} ---")
+        
+        # Get current state
+        sim_state = get_sim_state(sim_id)
+        display_sim_state(sim_state)
+        
+        # Get AI suggestion
+        print("🤖 AI is thinking...")
+        suggestion = get_ai_suggestion(sim_id)
+        
+        if suggestion and suggestion.get("action"):
+            action = suggestion["action"]
+            reason = suggestion.get("reason", "No reason provided")
+            
+            print(f"💡 AI suggests: {action}")
+            print(f"🧠 Reason: {reason}")
+            
+            # Process the action
+            print("⚡ Processing action...")
+            result = process_action(sim_id, action)
+            
+            if result:
+                narrative = result.get("narrative", "Action processed")
+                print(f"📖 {narrative}")
+            else:
+                print("❌ Failed to process action")
+        else:
+            print("❌ Could not get AI suggestion")
+        
+        if turn < num_turns:
+            time.sleep(turn_delay_seconds)
+    
+    print("\n" + "=" * 50)
+    print("🎉 Autopilot simulation completed!")
 
 def load_scenarios():
     """Load scenarios from scenarios.json"""
@@ -26,7 +119,7 @@ def load_scenarios():
 
 def show_menu():
     """Show the story watching menu"""
-    print("\n🎭 Sims Story Watcher")
+    print("\n🎭 Sims Story Watcher (New API)")
     print("=" * 40)
     print("Choose your story experience:")
     print()
@@ -81,6 +174,14 @@ def run_story(turns, delay, sim_id):
         print(f"\n❌ Error during story: {e}")
 
 def main():
+    # Check API health
+    if not check_api_health():
+        print("❌ API is not running! Please start the Docker services first:")
+        print("   docker-compose up -d")
+        return
+    
+    print("✅ API is running")
+    
     # Load scenarios
     scenarios = load_scenarios()
     if not scenarios:
