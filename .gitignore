@@ -1,43 +1,72 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Virtual environments
-.env
-.venv
-env/
+# Virtual Environment
 venv/
+env/
 ENV/
-*/ENV/
-*/env/
-*/venv/
+env.bak/
+venv.bak/
 
-# IDE / Editor specific
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Test artifacts
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# Docker
+.dockerignore
+
+# Testing
+.coverage
 .pytest_cache/
 htmlcov/
-.coverage
 
-# Build artifacts
-build/
-dist/
-*.egg-info/
-
-# Local instance / secrets
-instance/
-# *.sqlite3 (if you use SQLite locally and don't want to commit the DB)
-# .env (already covered above, but good to remember for secrets)
-# Consider adding .env.example to your repository if you have local .env files with secrets
-
-# Docker cache / data (if not desired in repo)
-# .dockerignore is preferred for docker build context, but sometimes useful here too
-# logs/
-# *.log 
-__pycache__/app.cpython-36.pyc
-__pycache__/app.cpython-39.pyc
-tests/__pycache__/test_app.cpython-39-pytest-8.3.5.pyc
+# Temporary files
+*.tmp
+*.temp
